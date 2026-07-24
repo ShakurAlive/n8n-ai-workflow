@@ -1,0 +1,835 @@
+{
+  "name": "01 Черновик и согласование",
+  "nodes": [
+    {
+      "parameters": { "updates": ["message"], "additionalFields": {} },
+      "id": "n01-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [-680, 380],
+      "webhookId": "smm-bot-draft"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "sw-cmd",
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "/",
+                    "operator": { "type": "string", "operation": "startsWith" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "command"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "sw-photo",
+                    "leftValue": "={{ $json.message.photo }}",
+                    "rightValue": "",
+                    "operator": { "type": "array", "operation": "notEmpty", "singleValue": true }
+                  },
+                  {
+                    "id": "sw-video",
+                    "leftValue": "={{ $json.message.video }}",
+                    "rightValue": "",
+                    "operator": { "type": "object", "operation": "exists", "singleValue": true }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "media"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n02-switch",
+      "name": "Что пришло",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [-460, 380]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select u.id                as user_id,\n       u.chat_id,\n       u.role,\n       u.display_name,\n       a.id                as account_id,\n       a.title             as account_title,\n       a.keyword           as account_keyword,\n       a.brand_name,\n       a.city,\n       a.tone,\n       a.extra_instructions,\n       a.default_hashtags,\n       a.ig_user_id,\n       a.ig_access_token,\n       a.ig_username,\n       a.story_headline,\n       a.story_subline\nfrom users u\n         left join accounts a on a.id = u.active_account_id\nwhere u.telegram_user_id = $1\n  and u.is_active = true;",
+        "options": { "queryReplacement": "={{ [ $json.message.from.id ] }}" }
+      },
+      "id": "n03-user",
+      "name": "Найти пользователя",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-240, 380],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            {
+              "id": "if-access",
+              "leftValue": "={{ $json.account_id }}",
+              "rightValue": "",
+              "operator": { "type": "number", "operation": "exists", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n04-if-access",
+      "name": "Есть доступ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-20, 380]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "Нет доступа или не выбран аккаунт. Обратитесь к администратору.",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "n05-no-access",
+      "name": "Нет доступа",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [200, 540]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f-groupkey",
+              "name": "group_key",
+              "value": "={{ $('Telegram Trigger').item.json.message.chat.id }}:{{ $('Telegram Trigger').item.json.message.media_group_id || 'm' + $('Telegram Trigger').item.json.message.message_id }}",
+              "type": "string"
+            },
+            { "id": "f-userid", "name": "user_id", "value": "={{ $json.user_id }}", "type": "number" },
+            { "id": "f-accountid", "name": "account_id", "value": "={{ $json.account_id }}", "type": "number" },
+            {
+              "id": "f-chatid",
+              "name": "chat_id",
+              "value": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+              "type": "number"
+            },
+            {
+              "id": "f-caption",
+              "name": "caption",
+              "value": "={{ $('Telegram Trigger').item.json.message.caption || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "f-mediatype",
+              "name": "media_type",
+              "value": "={{ $('Telegram Trigger').item.json.message.video ? 'video' : 'photo' }}",
+              "type": "string"
+            },
+            {
+              "id": "f-fileid",
+              "name": "file_id",
+              "value": "={{ $('Telegram Trigger').item.json.message.video ? $('Telegram Trigger').item.json.message.video.file_id : $('Telegram Trigger').item.json.message.photo.sortBy('file_size').last().file_id }}",
+              "type": "string"
+            },
+            {
+              "id": "f-uniqueid",
+              "name": "file_unique_id",
+              "value": "={{ $('Telegram Trigger').item.json.message.video ? $('Telegram Trigger').item.json.message.video.file_unique_id : $('Telegram Trigger').item.json.message.photo.sortBy('file_size').last().file_unique_id }}",
+              "type": "string"
+            },
+            {
+              "id": "f-width",
+              "name": "width",
+              "value": "={{ $('Telegram Trigger').item.json.message.video ? $('Telegram Trigger').item.json.message.video.width : $('Telegram Trigger').item.json.message.photo.sortBy('file_size').last().width }}",
+              "type": "number"
+            },
+            {
+              "id": "f-height",
+              "name": "height",
+              "value": "={{ $('Telegram Trigger').item.json.message.video ? $('Telegram Trigger').item.json.message.video.height : $('Telegram Trigger').item.json.message.photo.sortBy('file_size').last().height }}",
+              "type": "number"
+            },
+            {
+              "id": "f-filesize",
+              "name": "file_size",
+              "value": "={{ $('Telegram Trigger').item.json.message.video ? $('Telegram Trigger').item.json.message.video.file_size : $('Telegram Trigger').item.json.message.photo.sortBy('file_size').last().file_size }}",
+              "type": "number"
+            },
+            {
+              "id": "f-duration",
+              "name": "duration",
+              "value": "={{ $('Telegram Trigger').item.json.message.video ? $('Telegram Trigger').item.json.message.video.duration : null }}",
+              "type": "number"
+            },
+            {
+              "id": "f-mime",
+              "name": "mime_type",
+              "value": "={{ $('Telegram Trigger').item.json.message.video ? ($('Telegram Trigger').item.json.message.video.mime_type || 'video/mp4') : 'image/jpeg' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n06-fields",
+      "name": "Данные медиа",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [200, 260],
+      "notes": "Один Set на фото и на видео. Тернарные операторы выбирают, откуда брать поля: message.video или самый крупный кадр из message.photo."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into post_groups (group_key, user_id, account_id, chat_id, caption)\nvalues ($1, $2, $3, $4, $5)\non conflict (group_key) do update\n    set caption    = case\n                         when excluded.caption <> '' then excluded.caption\n                         else post_groups.caption\n        end,\n        updated_at = now()\nreturning id, status, caption;",
+        "options": {
+          "queryReplacement": "={{ [ $json.group_key, $json.user_id, $json.account_id, $json.chat_id, $json.caption ] }}"
+        }
+      },
+      "id": "n07-group",
+      "name": "Создать/обновить группу",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [420, 260]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "insert into post_media (group_id, file_id, file_unique_id, width, height,\n                        file_size, media_type, duration, mime_type)\nvalues ($1, $2, $3, $4, $5, $6, $7, $8, $9)\non conflict (group_id, file_unique_id) do nothing\nreturning id;",
+        "options": {
+          "queryReplacement": "={{ [ $json.id, $('Данные медиа').item.json.file_id, $('Данные медиа').item.json.file_unique_id, $('Данные медиа').item.json.width, $('Данные медиа').item.json.height, $('Данные медиа').item.json.file_size, $('Данные медиа').item.json.media_type, $('Данные медиа').item.json.duration, $('Данные медиа').item.json.mime_type ] }}"
+        }
+      },
+      "id": "n08-media",
+      "name": "Добавить медиа",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [640, 260],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": { "amount": 10, "unit": "seconds" },
+      "id": "n09-wait",
+      "name": "Пауза 10 секунд",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [860, 260],
+      "webhookId": "smm-bot-wait-collect"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update post_groups g\nset status     = 'generating',\n    media_kind = (select case\n                             when count(*) filter (where m.media_type = 'video') = 0 then 'photo'\n                             when count(*) filter (where m.media_type = 'photo') = 0 then 'video'\n                             else 'mixed'\n                             end\n                  from post_media m\n                  where m.group_id = g.id),\n    updated_at = now()\nwhere g.group_key = $1\n  and g.status = 'collecting'\nreturning *;",
+        "options": { "queryReplacement": "={{ [ $('Данные медиа').item.json.group_key ] }}" }
+      },
+      "id": "n10-claim",
+      "name": "Захватить группу",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1080, 260],
+      "alwaysOutputData": false,
+      "notes": "Ноль строк = группу уже забрало другое выполнение, ветка останавливается здесь. Галочку Always Output Data включать нельзя."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with grp as (select g.id,\n                    g.chat_id,\n                    g.caption,\n                    g.media_kind,\n                    g.account_id,\n                    a.brand_name,\n                    a.city,\n                    a.tone,\n                    a.extra_instructions,\n                    a.default_hashtags,\n                    a.ig_user_id,\n                    a.ig_access_token,\n                    a.ig_username,\n                    a.story_headline,\n                    a.story_subline\n             from post_groups g\n                      join accounts a on a.id = g.account_id\n             where g.id = $1),\n     stats as (select count(*)                   as media_count,\n                      coalesce(max(duration), 0) as duration\n               from post_media\n               where group_id = $1),\n     tpl as (select t.id, t.body\n             from prompt_templates t,\n                  grp\n             where t.is_active\n               and t.kind = case when grp.media_kind = 'photo' then 'draft_photo' else 'draft_video' end\n               and (t.account_id = grp.account_id or t.account_id is null)\n             order by t.account_id nulls last\n             limit 1)\nselect m.id   as media_id,\n       m.file_id,\n       m.file_unique_id,\n       m.media_type,\n       m.duration,\n       m.public_url,\n       grp.id as group_id,\n       grp.chat_id,\n       grp.caption,\n       grp.media_kind,\n       grp.account_id,\n       grp.brand_name,\n       grp.city,\n       grp.tone,\n       grp.extra_instructions,\n       grp.default_hashtags,\n       grp.ig_username,\n       stats.media_count,\n       tpl.id as prompt_template_id,\n       render_prompt(tpl.body, jsonb_build_object(\n               'caption', coalesce(nullif(grp.caption, ''), '(комментария не было)'),\n               'media_count', stats.media_count::text,\n               'duration', stats.duration::text,\n               'brand_name', grp.brand_name,\n               'city', grp.city,\n               'tone', grp.tone,\n               'extra', grp.extra_instructions,\n               'hashtags', grp.default_hashtags\n                             )) as prompt\nfrom post_media m,\n     grp,\n     stats,\n     tpl\nwhere m.group_id = grp.id\norder by m.id;",
+        "options": { "queryReplacement": "={{ [ $json.id ] }}" }
+      },
+      "id": "n11-media",
+      "name": "Медиа и настройки",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1300, 260],
+      "notes": "Промпт приезжает из таблицы prompt_templates уже отрендеренным. Нода Gemini получит просто {{ $json.prompt }}."
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "fileId": "={{ $json.file_id }}",
+        "download": true
+      },
+      "id": "n12-getfile",
+      "name": "Скачать файлы",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1520, 260],
+      "notes": "Telegram отдаёт ботам файлы до 20 МБ. Видео длиннее минуты может не пройти."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudinary.com/v1_1/ВСТАВЬТЕ_CLOUD_NAME/auto/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            { "parameterType": "formBinaryData", "name": "file", "inputDataFieldName": "data" },
+            { "name": "upload_preset", "value": "ВСТАВЬТЕ_UPLOAD_PRESET" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "n13-cloudinary",
+      "name": "Залить на Cloudinary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1740, 100],
+      "notes": "Unsigned upload preset — чтобы не считать подпись запроса кодом. Создаётся в Cloudinary: Settings → Upload → Add upload preset → Signing Mode: Unsigned."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update post_media\nset public_url = $1\nwhere id = $2\nreturning id, public_url;",
+        "options": {
+          "queryReplacement": "={{ [ $json.secure_url, $('Медиа и настройки').item.json.media_id ] }}"
+        }
+      },
+      "id": "n14-saveurl",
+      "name": "Сохранить URL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1960, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gemini принимает несколько файлов только внутри одного айтема,\n// поэтому складываем все скачанные файлы в один и добавляем данные\n// для промпта и для отправки альбома в Telegram.\nconst rows = $('Медиа и настройки').all().map((item) => item.json);\nconst first = rows[0];\n\nconst merged = { json: {}, binary: {} };\n\n$input.all().forEach((item, index) => {\n  merged.binary[`m${index}`] = item.binary.data;\n});\n\nmerged.json = {\n  group_id: first.group_id,\n  chat_id: first.chat_id,\n  account_id: first.account_id,\n  media_kind: first.media_kind,\n  media_count: rows.length,\n  has_video: rows.some((row) => row.media_type === 'video'),\n  prompt: first.prompt,\n  prompt_template_id: first.prompt_template_id,\n  brand_name: first.brand_name,\n  tg_media: rows.slice(0, 10).map((row) => ({\n    type: row.media_type === 'video' ? 'video' : 'photo',\n    media: row.file_id,\n  })),\n};\n\nreturn [merged];"
+      },
+      "id": "n15-merge",
+      "name": "Склеить медиа",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1740, 420]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            {
+              "id": "if-video",
+              "leftValue": "={{ $json.has_video }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n16-if-video",
+      "name": "Это видео?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1960, 420]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "analyze",
+        "modelId": { "__rl": true, "value": "models/gemini-2.5-flash", "mode": "id" },
+        "text": "={{ $json.prompt }}",
+        "inputType": "binary",
+        "binaryPropertyName": "={{ Object.keys($binary).join(',') }}",
+        "simplify": true,
+        "options": { "maxOutputTokens": 1200 }
+      },
+      "id": "n17-gemini-video",
+      "name": "Описать видео",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [2180, 320],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": { "__rl": true, "value": "models/gemini-2.5-flash", "mode": "id" },
+        "text": "={{ $json.prompt }}",
+        "inputType": "binary",
+        "binaryPropertyName": "={{ Object.keys($binary).join(',') }}",
+        "simplify": true,
+        "options": {}
+      },
+      "id": "n18-gemini-photo",
+      "name": "Описать фото",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [2180, 520],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Host в креденшелах должен быть только https://generativelanguage.googleapis.com без пути."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with upd as (\n    update post_groups\n        set post_text = $2,\n            status = 'pending_approval',\n            prompt_template_id = coalesce($4::int, prompt_template_id),\n            updated_at = now()\n        where id = $1\n        returning id, chat_id, post_text, caption, user_id, account_id),\n     rev as (\n         insert into post_revisions (group_id, version, post_text, edit_prompt)\n             select upd.id,\n                    (select coalesce(max(version), 0) + 1 from post_revisions where group_id = $1),\n                    $2,\n                    nullif($3, '')\n             from upd\n             returning version)\nselect upd.id                    as group_id,\n       upd.chat_id,\n       upd.post_text,\n       upd.caption,\n       a.brand_name,\n       (select version from rev) as version\nfrom upd\n         left join accounts a on a.id = upd.account_id;",
+        "options": {
+          "queryReplacement": "={{ [ $('Склеить медиа').first().json.group_id, $json.content.parts[0].text, '', $('Склеить медиа').first().json.prompt_template_id ] }}"
+        }
+      },
+      "id": "n19-savetext",
+      "name": "Сохранить текст",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2400, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/botВСТАВЬТЕ_ТОКЕН_БОТА/sendMediaGroup",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": {{ $json.chat_id }},\n  \"media\": {{ JSON.stringify($('Склеить медиа').first().json.tg_media) }}\n}",
+        "options": {}
+      },
+      "id": "n20-album",
+      "name": "Отправить альбом",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2620, 420],
+      "onError": "continueRegularOutput",
+      "notes": "file_id можно подставлять везде, где Telegram ждёт файл, поэтому перезаливать ничего не нужно."
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "chatId": "={{ $('Сохранить текст').first().json.chat_id }}",
+        "message": "={{ $('Сохранить текст').first().json.post_text }}",
+        "responseType": "approval",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double",
+            "approveLabel": "Опубликовать",
+            "disapproveLabel": "Внести правки"
+          }
+        },
+        "options": {
+          "limitWaitTime": true,
+          "limitType": "afterTimeInterval",
+          "resumeAmount": 24,
+          "resumeUnit": "hours"
+        }
+      },
+      "id": "n21-approve",
+      "name": "Согласование",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2840, 420],
+      "webhookId": "smm-bot-approval"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            {
+              "id": "if-approved",
+              "leftValue": "={{ $json.data.approved }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n22-if-approved",
+      "name": "Одобрено?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3060, 420]
+    },
+    {
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "ВСТАВЬТЕ_ID_ВОРКФЛОУ_02", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": { "group_id": "={{ $('Сохранить текст').first().json.group_id }}" }
+        },
+        "options": { "waitForSubWorkflow": false }
+      },
+      "id": "n23-publish",
+      "name": "Опубликовать",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [3280, 300],
+      "notes": "waitForSubWorkflow выключен: воркфлоу 02 сам спросит про сторис и может ждать ответа долго."
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "chatId": "={{ $('Сохранить текст').first().json.chat_id }}",
+        "message": "Напишите, что поправить. Или отправьте слово ОТМЕНА, чтобы отклонить черновик.",
+        "responseType": "freeText",
+        "options": {
+          "limitWaitTime": true,
+          "limitType": "afterTimeInterval",
+          "resumeAmount": 24,
+          "resumeUnit": "hours"
+        }
+      },
+      "id": "n24-askedit",
+      "name": "Что поправить?",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3280, 560],
+      "webhookId": "smm-bot-edit"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            {
+              "id": "if-cancel",
+              "leftValue": "={{ $json.data.text.toLowerCase().trim() }}",
+              "rightValue": "отмена",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n25-if-cancel",
+      "name": "Отмена?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3500, 560]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update post_groups\nset status     = 'rejected',\n    updated_at = now()\nwhere id = $1\nreturning id;",
+        "options": {
+          "queryReplacement": "={{ [ $('Сохранить текст').first().json.group_id ] }}"
+        }
+      },
+      "id": "n26-reject",
+      "name": "Отклонить",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [3720, 700]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Сохранить текст').first().json.chat_id }}",
+        "text": "Черновик отклонён.",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "n27-rejected-msg",
+      "name": "Сообщить об отклонении",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3940, 700]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with grp as (select g.id, g.post_text, g.account_id, a.brand_name\n             from post_groups g\n                      join accounts a on a.id = g.account_id\n             where g.id = $1),\n     tpl as (select t.id, t.body\n             from prompt_templates t,\n                  grp\n             where t.is_active\n               and t.kind = 'edit'\n               and (t.account_id = grp.account_id or t.account_id is null)\n             order by t.account_id nulls last\n             limit 1)\nselect grp.id as group_id,\n       tpl.id as prompt_template_id,\n       render_prompt(tpl.body, jsonb_build_object(\n               'brand_name', grp.brand_name,\n               'post_text', grp.post_text,\n               'edits', $2\n                             )) as prompt\nfrom grp,\n     tpl;",
+        "options": {
+          "queryReplacement": "={{ [ $('Склеить медиа').first().json.group_id, $json.data.text ] }}"
+        }
+      },
+      "id": "n28-editprompt",
+      "name": "Промпт для правок",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [3720, 460]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "modelId": { "__rl": true, "value": "models/gemini-2.5-flash", "mode": "id" },
+        "messages": { "values": [{ "content": "={{ $json.prompt }}" }] },
+        "simplify": true,
+        "options": {}
+      },
+      "id": "n29-rewrite",
+      "name": "Переписать пост",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [3940, 460],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with upd as (\n    update post_groups\n        set post_text = $2,\n            status = 'pending_approval',\n            prompt_template_id = coalesce($4::int, prompt_template_id),\n            updated_at = now()\n        where id = $1\n        returning id, chat_id, post_text, caption, user_id, account_id),\n     rev as (\n         insert into post_revisions (group_id, version, post_text, edit_prompt)\n             select upd.id,\n                    (select coalesce(max(version), 0) + 1 from post_revisions where group_id = $1),\n                    $2,\n                    nullif($3, '')\n             from upd\n             returning version)\nselect upd.id                    as group_id,\n       upd.chat_id,\n       upd.post_text,\n       upd.caption,\n       a.brand_name,\n       (select version from rev) as version\nfrom upd\n         left join accounts a on a.id = upd.account_id;",
+        "options": {
+          "queryReplacement": "={{ [ $('Склеить медиа').first().json.group_id, $json.content.parts[0].text, $('Что поправить?').first().json.data.text, $('Промпт для правок').first().json.prompt_template_id ] }}"
+        }
+      },
+      "id": "n30-saveedit",
+      "name": "Сохранить правку",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [4160, 460],
+      "notes": "Выход соединён обратно с нодой «Согласование» — это цикл правок."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select u.id                as user_id,\n       u.chat_id,\n       u.role,\n       u.display_name,\n       a.id                as account_id,\n       a.title             as account_title,\n       a.keyword           as account_keyword\nfrom users u\n         left join accounts a on a.id = u.active_account_id\nwhere u.telegram_user_id = $1\n  and u.is_active = true;",
+        "options": { "queryReplacement": "={{ [ $json.message.from.id ] }}" }
+      },
+      "id": "c01-user",
+      "name": "Пользователь для команды",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-240, 820]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "cmd-brand",
+                    "leftValue": "={{ $('Telegram Trigger').item.json.message.text }}",
+                    "rightValue": "/brand",
+                    "operator": { "type": "string", "operation": "startsWith" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "brand"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "cmd-stats",
+                    "leftValue": "={{ $('Telegram Trigger').item.json.message.text }}",
+                    "rightValue": "/stats",
+                    "operator": { "type": "string", "operation": "startsWith" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "stats"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "cmd-use",
+                    "leftValue": "={{ $('Telegram Trigger').item.json.message.text }}",
+                    "rightValue": "/use",
+                    "operator": { "type": "string", "operation": "startsWith" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "use"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra", "renameFallbackOutput": "help" }
+      },
+      "id": "c02-switch",
+      "name": "Какая команда",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [-20, 820]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select a.keyword,\n       a.title,\n       a.brand_name,\n       a.city,\n       a.tone,\n       a.default_hashtags,\n       coalesce(a.ig_username, '(не задан)') as ig_username,\n       (u.active_account_id = a.id)          as is_active\nfrom accounts a\n         join users u on u.id = a.owner_user_id\nwhere a.owner_user_id = $1\n  and a.is_active\norder by a.id;",
+        "options": { "queryReplacement": "={{ [ $('Пользователь для команды').first().json.user_id ] }}" }
+      },
+      "id": "c03-brand",
+      "name": "Показать аккаунты",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [200, 700]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "=Ваши аккаунты:\n\n{{ $input.all().map(i => (i.json.is_active ? '▶ ' : '   ') + i.json.keyword + ' — ' + i.json.title + '\\n     бренд: ' + i.json.brand_name + ', ' + i.json.city + '\\n     хештеги: ' + i.json.default_hashtags).join('\\n\\n') }}\n\nПереключить: /use <ключ>",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "c04-brand-msg",
+      "name": "Ответ: аккаунты",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [420, 700],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select coalesce(a.title, 'без аккаунта') as account,\n       g.status,\n       count(*)                          as cnt\nfrom post_groups g\n         left join accounts a on a.id = g.account_id\nwhere g.user_id = $1\n  and g.created_at > now() - interval '30 days'\ngroup by 1, 2\norder by cnt desc;",
+        "options": { "queryReplacement": "={{ [ $('Пользователь для команды').first().json.user_id ] }}" }
+      },
+      "id": "c05-stats",
+      "name": "Статистика",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [200, 860],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "=За последние 30 дней:\n\n{{ $input.all().filter(i => i.json.status).map(i => i.json.account + ' · ' + i.json.status + ': ' + i.json.cnt).join('\\n') || 'пока пусто' }}",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "c06-stats-msg",
+      "name": "Ответ: статистика",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [420, 860],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with target as (select id, title\n                from accounts\n                where owner_user_id = $1\n                  and lower(keyword) = lower($2)\n                  and is_active\n                limit 1)\nupdate users u\nset active_account_id = target.id\nfrom target\nwhere u.id = $1\nreturning target.title as account_title, target.id as account_id;",
+        "options": {
+          "queryReplacement": "={{ [ $('Пользователь для команды').first().json.user_id, ($('Telegram Trigger').item.json.message.text.split(' ')[1] || '').trim() ] }}"
+        }
+      },
+      "id": "c07-use",
+      "name": "Переключить аккаунт",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [200, 1020],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ $json.account_title ? 'Активный аккаунт: ' + $json.account_title : 'Аккаунт с таким ключом не найден. Посмотрите список: /brand' }}",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "c08-use-msg",
+      "name": "Ответ: аккаунт переключён",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [420, 1020]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "Что я умею:\n\nПришлите фото или видео готовой работы — соберу пост и покажу на утверждение. Всё, что отправлено в течение 10 секунд, попадёт в один пост.\n\nПодпись к первому файлу учитывается при генерации. Если начать её со слова «реклама» или «акция», получится рекламный пост, а не описание работы.\n\nВидео до 20 МБ публикуется как Reels. Смешивать фото и видео в одном посте нельзя — отправьте отдельно.\n\nПосле публикации спрошу, выложить ли сторис.\n\nКоманды:\n/brand — мои аккаунты и их настройки\n/use <ключ> — переключить аккаунт\n/stats — статистика за 30 дней\n/help — это сообщение",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "c09-help",
+      "name": "Ответ: помощь",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [200, 1180]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": { "main": [[{ "node": "Что пришло", "type": "main", "index": 0 }]] },
+    "Что пришло": {
+      "main": [
+        [{ "node": "Пользователь для команды", "type": "main", "index": 0 }],
+        [{ "node": "Найти пользователя", "type": "main", "index": 0 }]
+      ]
+    },
+    "Найти пользователя": { "main": [[{ "node": "Есть доступ?", "type": "main", "index": 0 }]] },
+    "Есть доступ?": {
+      "main": [
+        [{ "node": "Данные медиа", "type": "main", "index": 0 }],
+        [{ "node": "Нет доступа", "type": "main", "index": 0 }]
+      ]
+    },
+    "Данные медиа": { "main": [[{ "node": "Создать/обновить группу", "type": "main", "index": 0 }]] },
+    "Создать/обновить группу": { "main": [[{ "node": "Добавить медиа", "type": "main", "index": 0 }]] },
+    "Добавить медиа": { "main": [[{ "node": "Пауза 10 секунд", "type": "main", "index": 0 }]] },
+    "Пауза 10 секунд": { "main": [[{ "node": "Захватить группу", "type": "main", "index": 0 }]] },
+    "Захватить группу": { "main": [[{ "node": "Медиа и настройки", "type": "main", "index": 0 }]] },
+    "Медиа и настройки": { "main": [[{ "node": "Скачать файлы", "type": "main", "index": 0 }]] },
+    "Скачать файлы": {
+      "main": [
+        [
+          { "node": "Залить на Cloudinary", "type": "main", "index": 0 },
+          { "node": "Склеить медиа", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Залить на Cloudinary": { "main": [[{ "node": "Сохранить URL", "type": "main", "index": 0 }]] },
+    "Склеить медиа": { "main": [[{ "node": "Это видео?", "type": "main", "index": 0 }]] },
+    "Это видео?": {
+      "main": [
+        [{ "node": "Описать видео", "type": "main", "index": 0 }],
+        [{ "node": "Описать фото", "type": "main", "index": 0 }]
+      ]
+    },
+    "Описать видео": { "main": [[{ "node": "Сохранить текст", "type": "main", "index": 0 }]] },
+    "Описать фото": { "main": [[{ "node": "Сохранить текст", "type": "main", "index": 0 }]] },
+    "Сохранить текст": { "main": [[{ "node": "Отправить альбом", "type": "main", "index": 0 }]] },
+    "Отправить альбом": { "main": [[{ "node": "Согласование", "type": "main", "index": 0 }]] },
+    "Согласование": { "main": [[{ "node": "Одобрено?", "type": "main", "index": 0 }]] },
+    "Одобрено?": {
+      "main": [
+        [{ "node": "Опубликовать", "type": "main", "index": 0 }],
+        [{ "node": "Что поправить?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Что поправить?": { "main": [[{ "node": "Отмена?", "type": "main", "index": 0 }]] },
+    "Отмена?": {
+      "main": [
+        [{ "node": "Отклонить", "type": "main", "index": 0 }],
+        [{ "node": "Промпт для правок", "type": "main", "index": 0 }]
+      ]
+    },
+    "Отклонить": { "main": [[{ "node": "Сообщить об отклонении", "type": "main", "index": 0 }]] },
+    "Промпт для правок": { "main": [[{ "node": "Переписать пост", "type": "main", "index": 0 }]] },
+    "Переписать пост": { "main": [[{ "node": "Сохранить правку", "type": "main", "index": 0 }]] },
+    "Сохранить правку": { "main": [[{ "node": "Согласование", "type": "main", "index": 0 }]] },
+    "Пользователь для команды": { "main": [[{ "node": "Какая команда", "type": "main", "index": 0 }]] },
+    "Какая команда": {
+      "main": [
+        [{ "node": "Показать аккаунты", "type": "main", "index": 0 }],
+        [{ "node": "Статистика", "type": "main", "index": 0 }],
+        [{ "node": "Переключить аккаунт", "type": "main", "index": 0 }],
+        [{ "node": "Ответ: помощь", "type": "main", "index": 0 }]
+      ]
+    },
+    "Показать аккаунты": { "main": [[{ "node": "Ответ: аккаунты", "type": "main", "index": 0 }]] },
+    "Статистика": { "main": [[{ "node": "Ответ: статистика", "type": "main", "index": 0 }]] },
+    "Переключить аккаунт": { "main": [[{ "node": "Ответ: аккаунт переключён", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {}
+}

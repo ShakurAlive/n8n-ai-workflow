@@ -1,0 +1,708 @@
+{
+  "name": "02 Публикация",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": { "values": [{ "name": "group_id", "type": "number" }] }
+      },
+      "id": "p01-trigger",
+      "name": "Запуск из другого воркфлоу",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [-820, 380]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update post_groups\nset status     = 'publishing',\n    updated_at = now()\nwhere id = $1\n  and status in ('pending_approval', 'approved')\nreturning *;",
+        "options": { "queryReplacement": "={{ [ $json.group_id ] }}" }
+      },
+      "id": "p02-claim",
+      "name": "Захватить публикацию",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-600, 380],
+      "alwaysOutputData": false,
+      "notes": "Ноль строк = пост уже публикуется или опубликован. Защита от двойного нажатия кнопки."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select g.id      as group_id,\n       g.chat_id,\n       g.post_text,\n       g.media_kind,\n       a.ig_user_id,\n       a.ig_access_token,\n       a.ig_username,\n       a.story_headline,\n       a.story_subline\nfrom post_groups g\n         join accounts a on a.id = g.account_id\nwhere g.id = $1;",
+        "options": { "queryReplacement": "={{ [ $json.id ] }}" }
+      },
+      "id": "p03-data",
+      "name": "Данные для публикации",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-380, 380]
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v21.0/{{ $json.ig_user_id }}/content_publishing_limit",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "fields", "value": "quota_usage,config" },
+            { "name": "access_token", "value": "={{ $json.ig_access_token }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "p04-limit",
+      "name": "Лимит Instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-160, 380]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            {
+              "id": "if-limit",
+              "leftValue": "={{ $json.data[0].quota_usage }}",
+              "rightValue": "={{ $json.data[0].config.quota_total }}",
+              "operator": { "type": "number", "operation": "lt" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "p05-if-limit",
+      "name": "Лимит не исчерпан?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [60, 380]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Данные для публикации').first().json.chat_id }}",
+        "text": "Достигнут суточный лимит публикаций Instagram (50 постов за 24 часа). Пост сохранён, попробуйте позже.",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "p06-limit-msg",
+      "name": "Лимит исчерпан",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [280, 700]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "kind-photo",
+                    "leftValue": "={{ $('Данные для публикации').first().json.media_kind }}",
+                    "rightValue": "photo",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "photo"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "kind-video",
+                    "leftValue": "={{ $('Данные для публикации').first().json.media_kind }}",
+                    "rightValue": "video",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "video"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra", "renameFallbackOutput": "mixed" }
+      },
+      "id": "p07-kind",
+      "name": "Тип контента",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [280, 380]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select id as media_id,\n       public_url,\n       media_type,\n       duration\nfrom post_media\nwhere group_id = $1\n  and public_url is not null\norder by id;",
+        "options": { "queryReplacement": "={{ [ $('Данные для публикации').first().json.group_id ] }}" }
+      },
+      "id": "p08-urls-photo",
+      "name": "URL фото",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [500, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('Данные для публикации').first().json.ig_user_id }}/media",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "image_url", "value": "={{ $json.public_url }}" },
+            { "name": "is_carousel_item", "value": "={{ $('URL фото').all().length > 1 }}" },
+            {
+              "name": "caption",
+              "value": "={{ $('URL фото').all().length > 1 ? '' : $('Данные для публикации').first().json.post_text }}"
+            },
+            { "name": "access_token", "value": "={{ $('Данные для публикации').first().json.ig_access_token }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "p09-container-photo",
+      "name": "IG: контейнер фото",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 160],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "notes": "У карусели подпись задаётся на родительском контейнере, а у отдельных картинок её быть не должно. Если фото одно, карусели не будет и подпись пишется сразу сюда."
+    },
+    {
+      "parameters": {
+        "fieldsToAggregate": {
+          "fieldToAggregate": [{ "fieldToAggregate": "id", "renameField": true, "outputFieldName": "children" }]
+        },
+        "options": {}
+      },
+      "id": "p10-aggregate",
+      "name": "Собрать контейнеры",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [940, 160]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            {
+              "id": "if-carousel",
+              "leftValue": "={{ $json.children.length }}",
+              "rightValue": 1,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "p11-if-carousel",
+      "name": "Это карусель?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1160, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('Данные для публикации').first().json.ig_user_id }}/media",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "media_type", "value": "CAROUSEL" },
+            { "name": "children", "value": "={{ $json.children.join(',') }}" },
+            { "name": "caption", "value": "={{ $('Данные для публикации').first().json.post_text }}" },
+            { "name": "access_token", "value": "={{ $('Данные для публикации').first().json.ig_access_token }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "p12-carousel",
+      "name": "IG: карусель",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1380, 60]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [{ "id": "single-id", "name": "id", "value": "={{ $json.children[0] }}", "type": "string" }]
+        },
+        "options": {}
+      },
+      "id": "p13-single",
+      "name": "Один контейнер",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1380, 260]
+    },
+    {
+      "parameters": { "amount": 5, "unit": "seconds" },
+      "id": "p14-wait-photo",
+      "name": "Пауза 5 секунд",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1600, 160],
+      "webhookId": "smm-bot-wait-ig"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select id as media_id,\n       public_url,\n       media_type,\n       duration\nfrom post_media\nwhere group_id = $1\n  and public_url is not null\n  and media_type = 'video'\norder by id\nlimit 1;",
+        "options": { "queryReplacement": "={{ [ $('Данные для публикации').first().json.group_id ] }}" }
+      },
+      "id": "p15-urls-video",
+      "name": "URL видео",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [500, 480]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('Данные для публикации').first().json.ig_user_id }}/media",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "media_type", "value": "REELS" },
+            { "name": "video_url", "value": "={{ $json.public_url }}" },
+            { "name": "caption", "value": "={{ $('Данные для публикации').first().json.post_text }}" },
+            { "name": "share_to_feed", "value": "true" },
+            { "name": "access_token", "value": "={{ $('Данные для публикации').first().json.ig_access_token }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "p16-container-reels",
+      "name": "IG: контейнер Reels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 480],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": { "amount": 10, "unit": "seconds" },
+      "id": "p17-wait-video",
+      "name": "Пауза видео",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [940, 480],
+      "webhookId": "smm-bot-wait-video"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v21.0/{{ $json.id }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "fields", "value": "id,status_code" },
+            { "name": "access_token", "value": "={{ $('Данные для публикации').first().json.ig_access_token }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "p18-status",
+      "name": "Статус контейнера",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 480],
+      "notes": "Instagram обрабатывает видео асинхронно. Пока status_code не FINISHED, публиковать нельзя."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "st-finished",
+                    "leftValue": "={{ $json.status_code }}",
+                    "rightValue": "FINISHED",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "готово"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "st-error",
+                    "leftValue": "={{ $json.status_code === 'ERROR' || $runIndex >= 20 }}",
+                    "rightValue": "",
+                    "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ошибка"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra", "renameFallbackOutput": "ждём" }
+      },
+      "id": "p19-status-switch",
+      "name": "Видео готово?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1380, 480],
+      "notes": "$runIndex считает круги ожидания. После 20 попыток по 10 секунд (примерно 3 минуты) сдаёмся, чтобы не крутиться вечно."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('Данные для публикации').first().json.ig_user_id }}/media_publish",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "creation_id", "value": "={{ $json.id }}" },
+            { "name": "access_token", "value": "={{ $('Данные для публикации').first().json.ig_access_token }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "p20-publish",
+      "name": "IG: публикация",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1820, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v21.0/{{ $json.id }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "fields", "value": "permalink" },
+            { "name": "access_token", "value": "={{ $('Данные для публикации').first().json.ig_access_token }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "p21-permalink",
+      "name": "IG: ссылка на пост",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2040, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with upd as (\n    update post_groups\n        set status = 'published',\n            ig_media_id = $2,\n            ig_permalink = $3,\n            error = null,\n            updated_at = now()\n        where id = $1\n        returning id, user_id),\n     logged as (\n         insert into publish_log (group_id, user_id, status, ig_media_id)\n             select id, user_id, 'success', $2\n             from upd\n             returning id)\nselect upd.id                  as group_id,\n       (select id from logged) as log_id\nfrom upd;",
+        "options": {
+          "queryReplacement": "={{ [ $('Данные для публикации').first().json.group_id, $('IG: публикация').first().json.id, $json.permalink || '' ] }}"
+        }
+      },
+      "id": "p22-mark",
+      "name": "Отметить опубликованным",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2260, 200]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Данные для публикации').first().json.chat_id }}",
+        "text": "=Опубликовано.\n{{ $('IG: ссылка на пост').first().json.permalink || 'Ссылка недоступна, но пост создан.' }}",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "p23-done",
+      "name": "Сообщить об успехе",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2480, 200]
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "chatId": "={{ $('Данные для публикации').first().json.chat_id }}",
+        "message": "=Выложить сторис с анонсом этого поста?\n\nНа обложке будет: «{{ $('Данные для публикации').first().json.story_headline }}» и «{{ $('Данные для публикации').first().json.story_subline }}».\n\nКликабельную ссылку Instagram через API не пропускает, поэтому сторис отправит зрителей в профиль.",
+        "responseType": "approval",
+        "approvalOptions": {
+          "values": { "approvalType": "double", "approveLabel": "Выложить сторис", "disapproveLabel": "Не надо" }
+        },
+        "options": {
+          "limitWaitTime": true,
+          "limitType": "afterTimeInterval",
+          "resumeAmount": 6,
+          "resumeUnit": "hours"
+        }
+      },
+      "id": "p24-ask-story",
+      "name": "Сторис?",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2700, 200],
+      "webhookId": "smm-bot-story"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            {
+              "id": "if-story",
+              "leftValue": "={{ $json.data.approved }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "p25-if-story",
+      "name": "Делаем сторис?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2920, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select m.public_url,\n       m.media_type,\n       g.ig_permalink,\n       g.chat_id,\n       g.id as group_id,\n       a.ig_username,\n       a.story_headline,\n       a.story_subline,\n       a.ig_user_id,\n       a.ig_access_token\nfrom post_media m\n         join post_groups g on g.id = m.group_id\n         join accounts a on a.id = g.account_id\nwhere m.group_id = $1\n  and m.public_url is not null\norder by m.id\nlimit 1;",
+        "options": { "queryReplacement": "={{ [ $('Данные для публикации').first().json.group_id ] }}" }
+      },
+      "id": "p26-story-src",
+      "name": "Обложка для сторис",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [3140, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Собираем картинку для сторис из уже загруженного в Cloudinary файла.\n// Трансформация делает кадр 1080x1920 и накладывает две подписи.\n// Кликабельную ссылку Instagram через API не принимает, поэтому\n// в подписи идёт отсылка к профилю, а сам permalink пишем мелким текстом.\nconst d = $input.first().json;\n\nconst headline = encodeURIComponent(d.story_headline || 'НОВЫЙ ПРОЕКТ');\nconst subline = encodeURIComponent(d.story_subline || 'подробности в профиле');\nconst handle = encodeURIComponent(d.ig_username ? '@' + d.ig_username : '');\n\nconst layers = [\n  'c_fill,w_1080,h_1920,g_auto',\n  'e_brightness:-15',\n  `l_text:Arial_78_bold:${headline},co_white,g_north,y_280`,\n  `l_text:Arial_46:${subline},co_white,g_south,y_360`,\n];\n\nif (handle) {\n  layers.push(`l_text:Arial_40_bold:${handle},co_white,g_south,y_270`);\n}\n\nconst overlay = layers.join('/');\nlet url = d.public_url;\n\nif (d.media_type === 'video') {\n  // so_1 берёт кадр на первой секунде и отдаёт его картинкой\n  url = url\n    .replace('/video/upload/', `/video/upload/so_1/${overlay}/`)\n    .replace(/\\.(mp4|mov|webm|m4v)$/i, '.jpg');\n} else {\n  url = url.replace('/upload/', `/upload/${overlay}/`);\n}\n\nreturn [{ json: { ...d, story_image_url: url } }];"
+      },
+      "id": "p27-story-img",
+      "name": "Собрать сторис",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3360, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $json.ig_user_id }}/media",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "media_type", "value": "STORIES" },
+            { "name": "image_url", "value": "={{ $json.story_image_url }}" },
+            { "name": "access_token", "value": "={{ $json.ig_access_token }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "p28-story-container",
+      "name": "IG: контейнер сторис",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3580, 120],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": { "amount": 5, "unit": "seconds" },
+      "id": "p29-wait-story",
+      "name": "Пауза сторис",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [3800, 120],
+      "webhookId": "smm-bot-wait-story"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v21.0/{{ $('Собрать сторис').first().json.ig_user_id }}/media_publish",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "creation_id", "value": "={{ $json.id }}" },
+            { "name": "access_token", "value": "={{ $('Собрать сторис').first().json.ig_access_token }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "p30-story-publish",
+      "name": "IG: публикация сторис",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4020, 120],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Падение здесь не глушим: пусть лучше придёт уведомление из воркфлоу 04, чем в базе появится отметка о сторис, которой нет."
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update post_groups\nset story_media_id     = $2,\n    story_published_at = now(),\n    updated_at         = now()\nwhere id = $1\nreturning id, story_media_id;",
+        "options": {
+          "queryReplacement": "={{ [ $('Собрать сторис').first().json.group_id, $json.id ] }}"
+        }
+      },
+      "id": "p31-story-mark",
+      "name": "Отметить сторис",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [4240, 120]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Собрать сторис').first().json.chat_id }}",
+        "text": "=Сторис опубликована. Живёт 24 часа.\n\nПревью обложки: {{ $('Собрать сторис').first().json.story_image_url }}",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "p32-story-msg",
+      "name": "Сообщить о сторис",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [4460, 120]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with upd as (\n    update post_groups\n        set status = 'failed',\n            error = $2,\n            updated_at = now()\n        where id = $1\n        returning id, user_id),\n     logged as (\n         insert into publish_log (group_id, user_id, status, error)\n             select id, user_id, 'error', $2\n             from upd\n             returning id)\nselect upd.id                  as group_id,\n       (select id from logged) as log_id\nfrom upd;",
+        "options": {
+          "queryReplacement": "={{ [ $('Данные для публикации').first().json.group_id, JSON.stringify($json.error || $json).slice(0, 500) ] }}"
+        }
+      },
+      "id": "p33-fail",
+      "name": "Записать ошибку",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2040, 560]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Данные для публикации').first().json.chat_id }}",
+        "text": "=Не удалось опубликовать. Черновик сохранён, ошибка записана в базу.\n\n{{ JSON.stringify($('Записать ошибку').first().json).slice(0, 300) }}",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "p34-fail-msg",
+      "name": "Сообщить об ошибке",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2260, 560]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update post_groups\nset status     = 'pending_approval',\n    updated_at = now()\nwhere id = $1\nreturning id;",
+        "options": { "queryReplacement": "={{ [ $('Данные для публикации').first().json.group_id ] }}" }
+      },
+      "id": "p35-mixed",
+      "name": "Вернуть в черновик",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [500, 820]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Данные для публикации').first().json.chat_id }}",
+        "text": "В одном посте нельзя смешивать фото и видео — этот бот такое не публикует. Отправьте фотографии и видео отдельными сообщениями, получится два поста.",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "id": "p36-mixed-msg",
+      "name": "Нельзя смешивать",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [720, 820]
+    }
+  ],
+  "connections": {
+    "Запуск из другого воркфлоу": { "main": [[{ "node": "Захватить публикацию", "type": "main", "index": 0 }]] },
+    "Захватить публикацию": { "main": [[{ "node": "Данные для публикации", "type": "main", "index": 0 }]] },
+    "Данные для публикации": { "main": [[{ "node": "Лимит Instagram", "type": "main", "index": 0 }]] },
+    "Лимит Instagram": { "main": [[{ "node": "Лимит не исчерпан?", "type": "main", "index": 0 }]] },
+    "Лимит не исчерпан?": {
+      "main": [
+        [{ "node": "Тип контента", "type": "main", "index": 0 }],
+        [{ "node": "Лимит исчерпан", "type": "main", "index": 0 }]
+      ]
+    },
+    "Тип контента": {
+      "main": [
+        [{ "node": "URL фото", "type": "main", "index": 0 }],
+        [{ "node": "URL видео", "type": "main", "index": 0 }],
+        [{ "node": "Вернуть в черновик", "type": "main", "index": 0 }]
+      ]
+    },
+    "URL фото": { "main": [[{ "node": "IG: контейнер фото", "type": "main", "index": 0 }]] },
+    "IG: контейнер фото": { "main": [[{ "node": "Собрать контейнеры", "type": "main", "index": 0 }]] },
+    "Собрать контейнеры": { "main": [[{ "node": "Это карусель?", "type": "main", "index": 0 }]] },
+    "Это карусель?": {
+      "main": [
+        [{ "node": "IG: карусель", "type": "main", "index": 0 }],
+        [{ "node": "Один контейнер", "type": "main", "index": 0 }]
+      ]
+    },
+    "IG: карусель": { "main": [[{ "node": "Пауза 5 секунд", "type": "main", "index": 0 }]] },
+    "Один контейнер": { "main": [[{ "node": "Пауза 5 секунд", "type": "main", "index": 0 }]] },
+    "Пауза 5 секунд": { "main": [[{ "node": "IG: публикация", "type": "main", "index": 0 }]] },
+    "URL видео": { "main": [[{ "node": "IG: контейнер Reels", "type": "main", "index": 0 }]] },
+    "IG: контейнер Reels": { "main": [[{ "node": "Пауза видео", "type": "main", "index": 0 }]] },
+    "Пауза видео": { "main": [[{ "node": "Статус контейнера", "type": "main", "index": 0 }]] },
+    "Статус контейнера": { "main": [[{ "node": "Видео готово?", "type": "main", "index": 0 }]] },
+    "Видео готово?": {
+      "main": [
+        [{ "node": "IG: публикация", "type": "main", "index": 0 }],
+        [{ "node": "Записать ошибку", "type": "main", "index": 0 }],
+        [{ "node": "Пауза видео", "type": "main", "index": 0 }]
+      ]
+    },
+    "IG: публикация": {
+      "main": [
+        [{ "node": "IG: ссылка на пост", "type": "main", "index": 0 }],
+        [{ "node": "Записать ошибку", "type": "main", "index": 0 }]
+      ]
+    },
+    "IG: ссылка на пост": { "main": [[{ "node": "Отметить опубликованным", "type": "main", "index": 0 }]] },
+    "Отметить опубликованным": { "main": [[{ "node": "Сообщить об успехе", "type": "main", "index": 0 }]] },
+    "Сообщить об успехе": { "main": [[{ "node": "Сторис?", "type": "main", "index": 0 }]] },
+    "Сторис?": { "main": [[{ "node": "Делаем сторис?", "type": "main", "index": 0 }]] },
+    "Делаем сторис?": { "main": [[{ "node": "Обложка для сторис", "type": "main", "index": 0 }], []] },
+    "Обложка для сторис": { "main": [[{ "node": "Собрать сторис", "type": "main", "index": 0 }]] },
+    "Собрать сторис": { "main": [[{ "node": "IG: контейнер сторис", "type": "main", "index": 0 }]] },
+    "IG: контейнер сторис": { "main": [[{ "node": "Пауза сторис", "type": "main", "index": 0 }]] },
+    "Пауза сторис": { "main": [[{ "node": "IG: публикация сторис", "type": "main", "index": 0 }]] },
+    "IG: публикация сторис": { "main": [[{ "node": "Отметить сторис", "type": "main", "index": 0 }]] },
+    "Отметить сторис": { "main": [[{ "node": "Сообщить о сторис", "type": "main", "index": 0 }]] },
+    "Записать ошибку": { "main": [[{ "node": "Сообщить об ошибке", "type": "main", "index": 0 }]] },
+    "Вернуть в черновик": { "main": [[{ "node": "Нельзя смешивать", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "pinData": {}
+}

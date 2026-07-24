@@ -1,10 +1,19 @@
 # Секреты
 .env
-gitignore
-sectets
-# Локальные данные
+.env.local
+secrets/
+*.local
+
+# Локальные данные контейнеров
 n8n_data/
 postgres_data/
+
+# Экспорт воркфлоу из n8n может содержать креденшелы:
+# при экспорте через интерфейс токены попадают в файл в открытом виде.
+n8n/*.local.json
+n8n/export/
+workflows/*.local.json
+workflows/export/
 
 # Прочее
 *.log

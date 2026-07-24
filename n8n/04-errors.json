@@ -1,0 +1,51 @@
+{
+  "name": "04 Ошибки",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "e01-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [-300, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select chat_id\nfrom users\nwhere role = 'admin'\n  and is_active = true\nlimit 1;",
+        "options": {}
+      },
+      "id": "e02-admin",
+      "name": "Найти админа",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-80, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "=Сбой в воркфлоу «{{ $('Error Trigger').first().json.workflow.name }}»\n\nНода: {{ $('Error Trigger').first().json.execution?.lastNodeExecuted || 'неизвестно' }}\nОшибка: {{ $('Error Trigger').first().json.execution?.error?.message || 'без описания' }}\n\n{{ $('Error Trigger').first().json.execution?.url || '' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "e03-notify",
+      "name": "Сообщить админу",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [140, 300]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [[{ "node": "Найти админа", "type": "main", "index": 0 }]]
+    },
+    "Найти админа": {
+      "main": [[{ "node": "Сообщить админу", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

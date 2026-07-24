@@ -1,0 +1,134 @@
+{
+  "name": "03 Расписание и уборка",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "s01-tick",
+      "name": "Каждые 5 минут",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-400, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select g.id as group_id\nfrom post_groups g\nwhere g.status = 'approved'\n  and g.scheduled_at is not null\n  and g.scheduled_at <= now()\norder by g.scheduled_at\nlimit 5;",
+        "options": {}
+      },
+      "id": "s02-due",
+      "name": "Готовые к публикации",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-180, 200]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "ВСТАВЬТЕ_ID_ВОРКФЛОУ_02",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "group_id": "={{ $json.group_id }}"
+          }
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "s03-call",
+      "name": "Опубликовать отложенное",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [40, 200]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "s04-hourly",
+      "name": "Раз в час",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-400, 460]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "update post_groups\nset status = 'failed',\n    error  = 'зависло в статусе generating дольше 30 минут'\nwhere status = 'generating'\n  and updated_at < now() - interval '30 minutes'\nreturning id, group_key;",
+        "options": {}
+      },
+      "id": "s05-cleanup",
+      "name": "Почистить зависшее",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [-180, 460]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select chat_id\nfrom users\nwhere role = 'admin'\n  and is_active = true\nlimit 1;",
+        "options": {}
+      },
+      "id": "s06-admin",
+      "name": "Найти админа",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [40, 460],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "=Уборка: {{ $('Почистить зависшее').all().length }} групп(ы) зависли на генерации и переведены в failed. Фото можно отправить заново.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "s07-notify",
+      "name": "Уведомить админа",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [260, 460]
+    }
+  ],
+  "connections": {
+    "Каждые 5 минут": {
+      "main": [[{ "node": "Готовые к публикации", "type": "main", "index": 0 }]]
+    },
+    "Готовые к публикации": {
+      "main": [[{ "node": "Опубликовать отложенное", "type": "main", "index": 0 }]]
+    },
+    "Раз в час": {
+      "main": [[{ "node": "Почистить зависшее", "type": "main", "index": 0 }]]
+    },
+    "Почистить зависшее": {
+      "main": [[{ "node": "Найти админа", "type": "main", "index": 0 }]]
+    },
+    "Найти админа": {
+      "main": [[{ "node": "Уведомить админа", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

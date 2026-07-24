@@ -1,5 +1,6 @@
 # Секреты
 .env
+gitignore
 sectets
 # Локальные данные
 n8n_data/

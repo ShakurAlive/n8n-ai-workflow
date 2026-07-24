@@ -1,0 +1,10 @@
+# Секреты
+.env
+sectets
+# Локальные данные
+n8n_data/
+postgres_data/
+
+# Прочее
+*.log
+.DS_Store

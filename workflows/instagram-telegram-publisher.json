@@ -1,0 +1,125 @@
+{
+  "name": "Telegram -> Instagram (мебель) публикатор",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message", "callback_query"],
+        "additionalFields": {}
+      },
+      "id": "11111111-1111-1111-1111-111111111111",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [-40, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "cond-1",
+              "leftValue": "={{ $json.callback_query ? true : false }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "22222222-2222-2222-2222-222222222222",
+      "name": "Is Callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst bot = $env.TELEGRAM_BOT_TOKEN;\nconst H = this.helpers;\nconst m = $input.first().json.message;\nif (!m) { return []; }\nconst chatId0 = m.chat.id;\nif (sd.editing && sd.editing[chatId0] && (m.text || m.caption)) {\n  const pid = sd.editing[chatId0];\n  const post = (sd.posts || {})[pid];\n  delete sd.editing[chatId0];\n  if (post) {\n    post.caption = String(m.text || m.caption).trim();\n    const fids = post.fileIds || [];\n    if (fids.length === 1) { await H.httpRequest({ method: 'POST', url: `https://api.telegram.org/bot${bot}/sendPhoto`, body: { chat_id: chatId0, photo: fids[0] }, json: true }); }\n    else if (fids.length > 1) { await H.httpRequest({ method: 'POST', url: `https://api.telegram.org/bot${bot}/sendMediaGroup`, body: { chat_id: chatId0, media: fids.slice(0, 10).map((id) => ({ type: 'photo', media: id })) }, json: true }); }\n    const t = 'Обновлённый черновик:\\n\\n' + post.caption + '\\n\\nОпубликовать в Instagram?';\n    await H.httpRequest({ method: 'POST', url: `https://api.telegram.org/bot${bot}/sendMessage`, body: { chat_id: chatId0, text: t, reply_markup: { inline_keyboard: [[{ text: 'Опубликовать', callback_data: 'approve:' + pid }, { text: 'Отредактировать', callback_data: 'edit:' + pid }, { text: 'Отклонить', callback_data: 'reject:' + pid }]] } }, json: true });\n  }\n  return [];\n}\nif (!m.photo) { return []; }\nconst gid = String(m.media_group_id || ('single_' + m.message_id));\nif (!sd.groups) { sd.groups = {}; }\nif (!sd.groups[gid]) { sd.groups[gid] = { fileIds: [], caption: '', chatId: m.chat.id, ts: Date.now(), done: false }; }\nconst g = sd.groups[gid];\nconst largest = m.photo[m.photo.length - 1];\ng.fileIds.push(largest.file_id);\nif (m.caption) { g.caption = m.caption; }\ng.ts = Date.now();\nreturn [{ json: { gid } }];"
+      },
+      "id": "33333333-3333-3333-3333-333333333333",
+      "name": "Accumulate Photos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 460]
+    },
+    {
+      "parameters": {
+        "amount": 7,
+        "unit": "seconds"
+      },
+      "id": "44444444-4444-4444-4444-444444444444",
+      "name": "Wait (debounce)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [680, 460],
+      "webhookId": "debounce-wait-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst gid = $input.first().json.gid;\nconst g = (sd.groups || {})[gid];\nif (!g) { return []; }\nif (g.done) { return []; }\nif (Date.now() - g.ts < 6500) { return []; }\ng.done = true;\nconst out = { chatId: g.chatId, caption: g.caption, fileIds: g.fileIds };\ndelete sd.groups[gid];\nreturn [{ json: out }];"
+      },
+      "id": "55555555-5555-5555-5555-555555555555",
+      "name": "Debounce & Load",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 460]
+    },
+    {
+      "parameters": {
+        "jsCode": "const bot = $env.TELEGRAM_BOT_TOKEN;\nconst gk = $env.GEMINI_API_KEY;\nconst model = $env.GEMINI_MODEL || 'gemini-flash-latest';\nconst data = $input.first().json;\nconst fileIds = data.fileIds || [];\nconst chatId = data.chatId;\nconst userCaption = data.caption || '';\nconst H = this.helpers;\nconst parts = [];\nconst fileUrls = [];\nlet imgCount = 0;\nfor (const fid of fileIds) {\n  const gf = await H.httpRequest({ method: 'GET', url: `https://api.telegram.org/bot${bot}/getFile`, qs: { file_id: fid }, json: true });\n  const p = gf.result.file_path;\n  const url = `https://api.telegram.org/file/bot${bot}/${p}`;\n  fileUrls.push(url);\n  if (imgCount < 5) {\n    const bin = await H.httpRequest({ method: 'GET', url, encoding: 'arraybuffer' });\n    const b64 = Buffer.from(bin).toString('base64');\n    parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } });\n    imgCount++;\n  }\n}\nconst prompt = 'Ты SMM-специалист мастера корпусной мебели (кухни, шкафы, гардеробные) из Бишкека, Кыргызстан. По фото готовой работы напиши продающий пост для Instagram на русском языке: опиши стиль, материалы и преимущества, добавь 2-3 эмодзи, затем призыв подписаться и заказать мебель. В конце добавь 8-10 релевантных хештегов, обязательно включив локальные для Бишкека и Кыргызстана (например #Бишкек #Кыргызстан #мебельБишкек #кухниБишкек #шкафыБишкек #мебельназаказБишкек #Bishkek #Kyrgyzstan). Комментарий мастера: ' + userCaption + '. Верни только готовый текст поста без пояснений.';\nparts.unshift({ text: prompt });\nlet caption = 'Не удалось сгенерировать описание.';\ntry {\n  const gres = await H.httpRequest({ method: 'POST', url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${gk}`, body: { contents: [{ parts }] }, json: true });\n  caption = (gres && gres.candidates && gres.candidates[0] && gres.candidates[0].content && gres.candidates[0].content.parts[0].text) ? gres.candidates[0].content.parts[0].text.trim() : caption;\n} catch (e) {\n  const desc = (e && e.response && e.response.body) ? JSON.stringify(e.response.body) : (e.message || 'unknown');\n  caption = 'Ошибка ИИ: ' + desc + '. Комментарий: ' + userCaption;\n}\nif (caption.length > 2100) { caption = caption.slice(0, 2100); }\nconst sd = $getWorkflowStaticData('global');\nif (!sd.posts) { sd.posts = {}; }\nconst postId = Date.now().toString(36);\nsd.posts[postId] = { caption, fileUrls, fileIds, chatId };\nreturn [{ json: { postId, caption, fileUrls, chatId, fileIds } }];"
+      },
+      "id": "66666666-6666-6666-6666-666666666666",
+      "name": "Generate Post (AI)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 460]
+    },
+    {
+      "parameters": {
+        "jsCode": "const bot = $env.TELEGRAM_BOT_TOKEN;\nconst H = this.helpers;\nconst d = $input.first().json;\nconst chatId = d.chatId;\nconst fileIds = d.fileIds || [];\nconst caption = d.caption;\nconst postId = d.postId;\nasync function tg(method, body) {\n  try {\n    return await H.httpRequest({ method: 'POST', url: `https://api.telegram.org/bot${bot}/${method}`, body, json: true });\n  } catch (e) {\n    const desc = (e && e.response && e.response.body) ? JSON.stringify(e.response.body) : (e.message || 'unknown');\n    throw new Error(method + ' -> ' + desc);\n  }\n}\nif (fileIds.length === 1) {\n  await tg('sendPhoto', { chat_id: chatId, photo: fileIds[0] });\n} else if (fileIds.length > 1) {\n  const media = fileIds.slice(0, 10).map((id) => ({ type: 'photo', media: id }));\n  await tg('sendMediaGroup', { chat_id: chatId, media });\n}\nconst text = 'Черновик поста:\\n\\n' + caption + '\\n\\nОпубликовать в Instagram?';\nawait tg('sendMessage', { chat_id: chatId, text, reply_markup: { inline_keyboard: [[{ text: 'Опубликовать', callback_data: 'approve:' + postId }, { text: 'Отредактировать', callback_data: 'edit:' + postId }, { text: 'Отклонить', callback_data: 'reject:' + postId }]] } });\nreturn [{ json: { ok: true } }];"
+      },
+      "id": "77777777-7777-7777-7777-777777777777",
+      "name": "Send Preview",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 460]
+    },
+    {
+      "parameters": {
+        "jsCode": "const bot = $env.TELEGRAM_BOT_TOKEN;\nconst igUser = $env.IG_USER_ID;\nconst igToken = $env.IG_ACCESS_TOKEN;\nconst H = this.helpers;\nconst cq = $input.first().json.callback_query;\nconst chatId = cq.message.chat.id;\nawait H.httpRequest({ method: 'POST', url: `https://api.telegram.org/bot${bot}/answerCallbackQuery`, body: { callback_query_id: cq.id }, json: true });\ntry { await H.httpRequest({ method: 'POST', url: `https://api.telegram.org/bot${bot}/editMessageReplyMarkup`, body: { chat_id: cq.message.chat.id, message_id: cq.message.message_id, reply_markup: { inline_keyboard: [] } }, json: true }); } catch (e0) {}\nconst parts = String(cq.data || '').split(':');\nconst action = parts[0];\nconst postId = parts[1];\nconst sd = $getWorkflowStaticData('global');\nconst post = (sd.posts || {})[postId];\nif (!post) {\n  await H.httpRequest({ method: 'POST', url: `https://api.telegram.org/bot${bot}/sendMessage`, body: { chat_id: chatId, text: 'Данные поста не найдены (устарели). Отправьте фото заново.' }, json: true });\n  return [{ json: { ok: false } }];\n}\nif (action === 'reject') {\n  delete sd.posts[postId];\n  await H.httpRequest({ method: 'POST', url: `https://api.telegram.org/bot${bot}/sendMessage`, body: { chat_id: chatId, text: '❌ Публикация отменена.' }, json: true });\n  return [{ json: { ok: true } }];\n}\nif (action === 'edit') {\n  if (!sd.editing) { sd.editing = {}; }\n  sd.editing[chatId] = postId;\n  await H.httpRequest({ method: 'POST', url: `https://api.telegram.org/bot${bot}/sendMessage`, body: { chat_id: chatId, text: '✏️ Пришлите новый текст поста одним сообщением — я обновлю черновик.' }, json: true });\n  return [{ json: { ok: true } }];\n}\nconst graph = 'https://graph.facebook.com/v21.0';\ntry {\n  let creationId;\n  if (post.fileUrls.length === 1) {\n    const c = await H.httpRequest({ method: 'POST', url: `${graph}/${igUser}/media`, body: { image_url: post.fileUrls[0], caption: post.caption, access_token: igToken }, json: true });\n    creationId = c.id;\n  } else {\n    const children = [];\n    for (const u of post.fileUrls.slice(0, 10)) {\n      const ch = await H.httpRequest({ method: 'POST', url: `${graph}/${igUser}/media`, body: { image_url: u, is_carousel_item: true, access_token: igToken }, json: true });\n      children.push(ch.id);\n    }\n    const car = await H.httpRequest({ method: 'POST', url: `${graph}/${igUser}/media`, body: { media_type: 'CAROUSEL', children: children.join(','), caption: post.caption, access_token: igToken }, json: true });\n    creationId = car.id;\n  }\n  const pub = await H.httpRequest({ method: 'POST', url: `${graph}/${igUser}/media_publish`, body: { creation_id: creationId, access_token: igToken }, json: true });\n  delete sd.posts[postId];\n  await H.httpRequest({ method: 'POST', url: `https://api.telegram.org/bot${bot}/sendMessage`, body: { chat_id: chatId, text: 'Опубликовано в Instagram. ID: ' + pub.id }, json: true });\n  return [{ json: { ok: true, id: pub.id } }];\n} catch (e) {\n  const emsg = (e && e.response && e.response.body) ? JSON.stringify(e.response.body) : (e.message || 'unknown');\n  await H.httpRequest({ method: 'POST', url: `https://api.telegram.org/bot${bot}/sendMessage`, body: { chat_id: chatId, text: 'Ошибка публикации: ' + emsg }, json: true });\n  return [{ json: { ok: false, error: emsg } }];\n}"
+      },
+      "id": "88888888-8888-8888-8888-888888888888",
+      "name": "Handle Approval",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 160]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [[{ "node": "Is Callback?", "type": "main", "index": 0 }]]
+    },
+    "Is Callback?": {
+      "main": [
+        [{ "node": "Handle Approval", "type": "main", "index": 0 }],
+        [{ "node": "Accumulate Photos", "type": "main", "index": 0 }]
+      ]
+    },
+    "Accumulate Photos": {
+      "main": [[{ "node": "Wait (debounce)", "type": "main", "index": 0 }]]
+    },
+    "Wait (debounce)": {
+      "main": [[{ "node": "Debounce & Load", "type": "main", "index": 0 }]]
+    },
+    "Debounce & Load": {
+      "main": [[{ "node": "Generate Post (AI)", "type": "main", "index": 0 }]]
+    },
+    "Generate Post (AI)": {
+      "main": [[{ "node": "Send Preview", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "pinData": {}
+}

@@ -1,0 +1,27 @@
+{
+  "name": "pgtest",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "aaaaaaaa-0000-0000-0000-000000000001",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { Client } = require('pg');\nconst c = new Client();\nawait c.connect();\nawait c.query('CREATE TABLE IF NOT EXISTS _pgtest(id serial primary key, t timestamptz default now())');\nconst r = await c.query('INSERT INTO _pgtest DEFAULT VALUES RETURNING id');\nawait c.end();\nreturn [{ json: { ok: true, id: r.rows[0].id } }];"
+      },
+      "id": "bbbbbbbb-0000-0000-0000-000000000002",
+      "name": "PG",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    }
+  ],
+  "connections": {
+    "Start": { "main": [[{ "node": "PG", "type": "main", "index": 0 }]] }
+  },
+  "settings": {}
+}
